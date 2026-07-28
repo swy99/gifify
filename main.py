@@ -284,6 +284,7 @@ class App:
 
     def _play_loop(self):
         t = self.scale.get()
+        last = time.time()
         while self.playing and t < self.duration:
             try:
                 speed = float(self.speed_var.get())
@@ -296,13 +297,25 @@ class App:
             except ValueError:
                 preview_fps = DEFAULT_PREVIEW_FPS
             preview_fps = max(0.5, min(preview_fps, 15.0))
-            interval = 1.0 / preview_fps
+            min_interval = 1.0 / preview_fps
 
             ppm = grab_frame_ppm(self.input_path, t)
             if ppm:
                 self.root.after(0, self._on_play_tick, ppm, t)
-            time.sleep(interval)
-            t += interval * speed
+
+            # Cap the refresh rate at preview_fps, but never assume the
+            # grab above was free: measure real elapsed time so "speed"
+            # tracks wall-clock time consistently regardless of how long
+            # frame extraction took.
+            now = time.time()
+            elapsed = now - last
+            remaining = min_interval - elapsed
+            if remaining > 0:
+                time.sleep(remaining)
+                elapsed = min_interval
+            last = time.time()
+
+            t += elapsed * speed
         self.root.after(0, self._stop_playback)
 
     def _on_play_tick(self, ppm, t):
