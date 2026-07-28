@@ -46,12 +46,15 @@ def grab_frame_ppm(path, t, width=PREVIEW_WIDTH):
     return result.stdout
 
 
-def convert_to_gif(input_path, output_path, width, fps, start, end, on_status=None):
+def convert_to_gif(input_path, output_path, width, fps, start, end, speed=1.0, on_status=None):
     def status(msg):
         if on_status:
             on_status(msg)
 
-    scale_filter = f"scale={width}:-1:flags=lanczos"
+    speed = max(0.1, min(speed, 8.0))
+    # setpts rescales presentation timestamps so the exported GIF itself
+    # plays back faster/slower than the source, not just the in-app preview.
+    filter_chain = f"setpts=PTS/{speed},fps={fps},scale={width}:-1:flags=lanczos"
     palette_path = os.path.join(tempfile.gettempdir(), f"palette_{uuid.uuid4().hex}.png")
     duration = max(0.05, end - start)
     trim_args = ["-ss", f"{start:.3f}", "-t", f"{duration:.3f}"]
@@ -60,7 +63,7 @@ def convert_to_gif(input_path, output_path, width, fps, start, end, on_status=No
         status("팔레트 생성 중...")
         r1 = _run([
             "ffmpeg", *trim_args, "-i", input_path,
-            "-vf", f"fps={fps},{scale_filter},palettegen",
+            "-vf", f"{filter_chain},palettegen",
             "-y", palette_path,
         ])
         if r1.returncode != 0:
@@ -69,7 +72,7 @@ def convert_to_gif(input_path, output_path, width, fps, start, end, on_status=No
         status("GIF 인코딩 중...")
         r2 = _run([
             "ffmpeg", *trim_args, "-i", input_path, "-i", palette_path,
-            "-filter_complex", f"fps={fps},{scale_filter}[x];[x][1:v]paletteuse",
+            "-filter_complex", f"{filter_chain}[x];[x][1:v]paletteuse",
             "-y", output_path,
         ])
         if r2.returncode != 0:
@@ -345,6 +348,11 @@ class App:
         except ValueError:
             messagebox.showerror("오류", "너비와 FPS는 숫자로 입력하세요.")
             return
+        try:
+            speed = float(self.speed_var.get())
+        except ValueError:
+            messagebox.showerror("오류", "재생 속도는 숫자로 입력하세요.")
+            return
         if self.trim_end <= self.trim_start:
             messagebox.showerror("오류", "구간(시작~끝)을 올바르게 설정하세요.")
             return
@@ -359,7 +367,7 @@ class App:
         def worker():
             try:
                 convert_to_gif(
-                    input_path, output_path, width, fps, start, end,
+                    input_path, output_path, width, fps, start, end, speed=speed,
                     on_status=lambda msg: self.root.after(0, self.status_var.set, msg),
                 )
                 self.root.after(0, self._on_success, output_path)
